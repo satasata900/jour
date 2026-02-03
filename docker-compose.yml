@@ -1,0 +1,155 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-satajour}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123qwe123QWE@}
+      POSTGRES_DB: ${POSTGRES_DB:-app_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-satajour}:${POSTGRES_PASSWORD_URLENCODED:-123qwe123QWE%40}@db:5432/${POSTGRES_DB:-app_db}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-}
+      INGEST_TOKEN: ${INGEST_TOKEN:-}
+      REQUIRE_HTTPS: ${REQUIRE_HTTPS:-false}
+      SEED_TEST_USER: ${SEED_TEST_USER:-false}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_API_VERSION: ${GEMINI_API_VERSION:-v1}
+      AGENTS_BASE_URL: ${AGENTS_BASE_URL:-http://agents:8001}
+      AGENT_LLM_MODEL: ${AGENT_LLM_MODEL:-gemini-flash-lite-latest}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      SEARCH_PROVIDER: ${SEARCH_PROVIDER:-searxng}
+      SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://searxng:8080}
+      SEARXNG_TIMEOUT_SECONDS: ${SEARXNG_TIMEOUT_SECONDS:-15}
+      SEARXNG_MAX_RESULTS: ${SEARXNG_MAX_RESULTS:-5}
+      SEARXNG_SAFESEARCH: ${SEARXNG_SAFESEARCH:-0}
+      SEARXNG_LANGUAGE: ${SEARXNG_LANGUAGE:-all}
+      SEARXNG_TIME_RANGE: ${SEARXNG_TIME_RANGE:-}
+      SEARXNG_CATEGORIES: ${SEARXNG_CATEGORIES:-}
+      SEARXNG_ENGINES: ${SEARXNG_ENGINES:-}
+      SUMMARY_TIMEZONE: ${SUMMARY_TIMEZONE:-Asia/Damascus}
+      SUMMARY_RUN_INTERVAL_SECONDS: ${SUMMARY_RUN_INTERVAL_SECONDS:-300}
+      SUMMARY_MAX_MESSAGES: ${SUMMARY_MAX_MESSAGES:-200}
+      SUMMARY_MAX_CHARS: ${SUMMARY_MAX_CHARS:-120000}
+      NEWS_RETENTION_DAYS: ${NEWS_RETENTION_DAYS:-1}
+      SUMMARY_MODEL: ${SUMMARY_MODEL:-gemini-flash-lite-latest}
+      WA_PHONE_NUMBER: ${WA_PHONE_NUMBER:-}
+      WA_LOG_LEVEL: ${WA_LOG_LEVEL:-info}
+      WA_ENABLED: ${WA_ENABLED:-true}
+      TG_API_ID: ${TG_API_ID:-}
+      TG_API_HASH: ${TG_API_HASH:-}
+      TG_PHONE_NUMBER: ${TG_PHONE_NUMBER:-}
+      TG_SESSION_NAME: ${TG_SESSION_NAME:-telegram}
+      TG_LOG_LEVEL: ${TG_LOG_LEVEL:-info}
+      TG_INCLUDE_PRIVATE: ${TG_INCLUDE_PRIVATE:-false}
+      TG_LOG_GROUPS: ${TG_LOG_GROUPS:-false}
+      TG_ENABLED: ${TG_ENABLED:-true}
+      TG_BOT_TOKEN: ${TG_BOT_TOKEN:-}
+      TG_BOT_USERNAME: ${TG_BOT_USERNAME:-}
+      TG_BOT_ENABLED: ${TG_BOT_ENABLED:-false}
+    depends_on:
+      - db
+      - redis
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+    depends_on:
+      - backend
+
+  agents:
+    build:
+      context: ./agent-service
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-satajour}:${POSTGRES_PASSWORD_URLENCODED:-123qwe123QWE%40}@db:5432/${POSTGRES_DB:-app_db}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_API_VERSION: ${GEMINI_API_VERSION:-v1}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      AGENT_LLM_MODEL: ${AGENT_LLM_MODEL:-gemini-flash-lite-latest}
+      AGENT_LLM_PROVIDER: ${AGENT_LLM_PROVIDER:-gemini}
+      SEARCH_PROVIDER: ${SEARCH_PROVIDER:-searxng}
+      SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://searxng:8080}
+      SEARXNG_TIMEOUT_SECONDS: ${SEARXNG_TIMEOUT_SECONDS:-15}
+      SEARXNG_MAX_RESULTS: ${SEARXNG_MAX_RESULTS:-5}
+      SEARXNG_SAFESEARCH: ${SEARXNG_SAFESEARCH:-0}
+      SEARXNG_LANGUAGE: ${SEARXNG_LANGUAGE:-all}
+      SEARXNG_TIME_RANGE: ${SEARXNG_TIME_RANGE:-}
+      SEARXNG_CATEGORIES: ${SEARXNG_CATEGORIES:-}
+      SEARXNG_ENGINES: ${SEARXNG_ENGINES:-}
+      AGENT_LOG_LEVEL: ${AGENT_LOG_LEVEL:-info}
+    depends_on:
+      - db
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./agent-service:/app
+
+  searxng:
+    image: searxng/searxng:latest
+    environment:
+      SEARXNG_SETTINGS_PATH: /etc/searxng/settings.yml
+    depends_on:
+      - redis
+    ports:
+      - "8085:8080"
+    volumes:
+      - ./searxng:/etc/searxng
+
+  whatsapp:
+    build:
+      context: ./whatsapp-service
+    environment:
+      BACKEND_INGEST_URL: ${BACKEND_INGEST_URL:-http://backend:8000/news}
+      INGEST_TOKEN: ${INGEST_TOKEN:-}
+      WA_SESSION_DIR: /app/session
+      WA_LOG_LEVEL: ${WA_LOG_LEVEL:-info}
+      WA_PHONE_NUMBER: ${WA_PHONE_NUMBER:-}
+    depends_on:
+      - backend
+    volumes:
+      - whatsapp_session:/app/session
+
+  telegram:
+    build:
+      context: ./telegram-service
+    environment:
+      BACKEND_INGEST_URL: ${BACKEND_INGEST_URL:-http://backend:8000/news}
+      INGEST_TOKEN: ${INGEST_TOKEN:-}
+      TG_API_ID: ${TG_API_ID}
+      TG_API_HASH: ${TG_API_HASH}
+      TG_PHONE_NUMBER: ${TG_PHONE_NUMBER}
+      TG_SESSION_DIR: /app/session
+      TG_SESSION_NAME: ${TG_SESSION_NAME:-telegram}
+      TG_LOG_LEVEL: ${TG_LOG_LEVEL:-info}
+      TG_INCLUDE_PRIVATE: ${TG_INCLUDE_PRIVATE:-false}
+      TG_LOG_GROUPS: ${TG_LOG_GROUPS:-false}
+    depends_on:
+      - backend
+    volumes:
+      - telegram_session:/app/session
+
+volumes:
+  postgres_data:
+  whatsapp_session:
+  telegram_session:
