@@ -28,6 +28,7 @@ class AppState extends ChangeNotifier {
   late final SyncService syncService;
   late final LocalAgentService localAgentService;
   Timer? _syncTimer;
+  static const String defaultAgentKey = "assistant_general";
 
   AppState({required this.apiService, required this.storage}) {
     syncService = SyncService(apiService);
@@ -84,23 +85,28 @@ class AppState extends ChangeNotifier {
           }
         }
 
-        // Initialize Local Agent and Sync
+        try {
+          syncService.syncSummaries(token: token);
+        } catch (e) {
+          print("Failed to sync summaries: $e");
+        }
+
+        // Start periodic sync every 30 minutes
+        _syncTimer?.cancel();
+        _syncTimer = Timer.periodic(const Duration(minutes: 30), (timer) {
+          if (isAuthenticated) {
+            print("Running periodic sync...");
+            syncService.syncSummaries(token: authToken);
+          }
+        });
+
+        // Initialize Local Agent only when key exists
         if (geminiKey != null) {
           try {
             final config = await apiService.fetchMobileConfig(token: token);
             localAgentService.init(geminiKey!, config);
-            syncService.syncSummaries(token: token);
-
-            // Start periodic sync every 30 minutes
-            _syncTimer?.cancel();
-            _syncTimer = Timer.periodic(const Duration(minutes: 30), (timer) {
-              if (isAuthenticated && geminiKey != null) {
-                print("Running periodic sync...");
-                syncService.syncSummaries(token: authToken);
-              }
-            });
           } catch (e) {
-            print("Failed to init local agent or sync: $e");
+            print("Failed to init local agent: $e");
           }
         }
       } catch (_) {
@@ -124,6 +130,12 @@ class AppState extends ChangeNotifier {
       await storage.saveEmail(email);
       geminiKey = await storage.readGeminiKeyForUser(result.user.username);
 
+      try {
+        syncService.syncSummaries(token: result.token);
+      } catch (e) {
+        print("Failed to sync summaries on login: $e");
+      }
+
       // Init Local Agent logic on login if key exists
       if (geminiKey != null) {
         try {
@@ -131,7 +143,6 @@ class AppState extends ChangeNotifier {
             token: result.token,
           );
           localAgentService.init(geminiKey!, config);
-          syncService.syncSummaries(token: result.token);
         } catch (e) {
           print("Failed to init local agent on login: $e");
         }
@@ -161,12 +172,17 @@ class AppState extends ChangeNotifier {
       await storage.saveEmail(email);
       geminiKey = await storage.readGeminiKeyForUser(result.user.username);
 
+      try {
+        syncService.syncSummaries(token: result.token);
+      } catch (e) {
+        print("Failed to sync summaries on register: $e");
+      }
+
       if (geminiKey != null) {
         try {
           final config =
               await apiService.fetchMobileConfig(token: result.token);
           localAgentService.init(geminiKey!, config);
-          syncService.syncSummaries(token: result.token);
         } catch (e) {
           print("Failed to init local agent on register: $e");
         }
@@ -280,19 +296,24 @@ class AppState extends ChangeNotifier {
 
       String output = "";
 
-      // 3. Generate Response
-      if (geminiKey != null && geminiKey!.isNotEmpty) {
-        output = await localAgentService.chat(prompt);
-      } else {
+      // 3. Generate Response via backend agent profile
+      if (authToken == null) {
         messages.add(
           ChatMessage.system(
-            "عذراً، لا يمكن المتابعة.\nيرجى الذهاب للإعدادات وإدخال مفتاح Gemini API الخاص بك لتفعيل المساعد.",
+            "يرجى تسجيل الدخول أولاً لاستخدام المساعد.",
           ),
         );
         isSending = false;
         notifyListeners();
         return;
       }
+      final result = await apiService.runAgent(
+        task: prompt,
+        route: route ?? defaultAgentKey,
+        token: authToken,
+        geminiKey: geminiKey,
+      );
+      output = result.output;
 
       messages.add(ChatMessage.assistant(output));
 

@@ -4,6 +4,22 @@ from app import models
 
 DEFAULT_AGENT_PROFILES = [
     {
+        "key": "assistant_general",
+        "name": "المساعد العام",
+        "description": "مساعد صحفي عام يرد بأسلوب تحريري واضح.",
+        "agent_type": "general",
+        "system_prompt": (
+            "أنت مساعد صحفي عام. "
+            "أجب بالعربية الفصحى وبأسلوب واضح ومباشر. "
+            "بدون مقدمات أو خواتيم، وبدون تنسيق خاص أو نجوم. "
+            "قدّم المعلومات بشكل ملخص وسهل القراءة، "
+            "واستخدم السياق المرفق إن وُجد."
+        ),
+        "user_prompt": "سؤال: {task}\nالسياق: {context}",
+        "is_active": True,
+        "is_system": True,
+    },
+    {
         "key": "router",
         "name": "Router",
         "description": "Routes tasks to the best agent.",
