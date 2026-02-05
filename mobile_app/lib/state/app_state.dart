@@ -5,6 +5,8 @@ import "package:flutter/material.dart";
 import "../models/chat_message.dart";
 import "../models/telegram_preferences.dart";
 import "../models/user.dart";
+import "../models/summary_entry.dart";
+import "../database_helper.dart";
 import "../services/api_service.dart";
 import "../services/secure_storage_service.dart";
 import "../services/sync_service.dart";
@@ -13,6 +15,7 @@ import "../services/local_agent_service.dart";
 class AppState extends ChangeNotifier {
   final ApiService apiService;
   final SecureStorageService storage;
+  final DatabaseHelper _db = DatabaseHelper();
 
   User? currentUser;
   String? authToken;
@@ -60,6 +63,100 @@ class AppState extends ChangeNotifier {
       return int.tryParse(value.trim());
     }
     return null;
+  }
+
+  bool _isGreetingQuery(String text) {
+    final t = text.toLowerCase();
+    const greetings = [
+      "مرحبا",
+      "مرحباً",
+      "أهلا",
+      "اهلا",
+      "أهلًا",
+      "هلا",
+      "هاي",
+      "سلام",
+      "السلام عليكم",
+      "صباح الخير",
+      "مساء الخير",
+      "كيفك",
+      "كيف حالك",
+      "شلونك",
+      "hello",
+      "hi",
+      "hey",
+    ];
+    for (final g in greetings) {
+      if (t.contains(g)) return true;
+    }
+    return false;
+  }
+
+  bool _isGeneralNewsQuery(String text) {
+    final t = text.toLowerCase();
+    const keywords = [
+      'أخبار',
+      'اخبار',
+      'الأخبار',
+      'الاخبار',
+      'ملخص',
+      'مستجدات',
+      'تطورات',
+      'أحداث',
+      'احداث',
+      'آخر',
+      'حديث',
+      'news',
+      'latest',
+      'update',
+      'summary',
+      'brief',
+    ];
+    for (final k in keywords) {
+      if (t.contains(k)) return true;
+    }
+    return false;
+  }
+
+  Future<String?> _buildSmartContext(String query) async {
+    try {
+      final trimmed = query.trim();
+      if (trimmed.length < 3) {
+        return null;
+      }
+      if (_isGreetingQuery(trimmed)) {
+        return null;
+      }
+
+      List<SummaryEntry> summaries = await _db.searchSummaries(trimmed);
+      if (summaries.isEmpty && _isGeneralNewsQuery(trimmed)) {
+        summaries = await _db.getRecentSummaries(limit: 8);
+      }
+      if (summaries.isEmpty) {
+        return null;
+      }
+
+      final buffer = StringBuffer();
+      buffer.writeln("سياق إخباري مختصر (للاستدلال فقط):");
+      for (final summary in summaries.take(8)) {
+        var content = summary.content.trim();
+        if (content.isEmpty) {
+          continue;
+        }
+        if (content.length > 500) {
+          content = "${content.substring(0, 500)}…";
+        }
+        buffer.writeln("- [${summary.periodType}] $content");
+        if (buffer.length > 6000) {
+          break;
+        }
+      }
+      final result = buffer.toString().trim();
+      return result.isEmpty ? null : result;
+    } catch (e) {
+      print("Failed to build smart context: $e");
+      return null;
+    }
   }
 
   Future<void> loadSession() async {
@@ -307,8 +404,10 @@ class AppState extends ChangeNotifier {
         notifyListeners();
         return;
       }
+      final context = await _buildSmartContext(prompt);
       final result = await apiService.runAgent(
         task: prompt,
+        context: context,
         route: route ?? defaultAgentKey,
         token: authToken,
         geminiKey: geminiKey,
