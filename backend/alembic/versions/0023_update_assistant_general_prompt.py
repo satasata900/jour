@@ -1,13 +1,13 @@
 """Update assistant general prompt.
 
-Revision ID: 0023_update_assistant_general_prompt
+Revision ID: 0023_assistant_general
 Revises: 0022_add_assistant_general_agent
 Create Date: 2026-02-04
 """
 
 from alembic import op
 
-revision = "0023_update_assistant_general_prompt"
+revision = "0023_assistant_general"
 down_revision = "0022_add_assistant_general_agent"
 branch_labels = None
 depends_on = None
