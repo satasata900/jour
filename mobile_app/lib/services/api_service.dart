@@ -67,11 +67,15 @@ class ApiService {
   final String baseUrl;
 
   ApiService(String baseUrl)
-      : baseUrl = baseUrl.endsWith("/")
-            ? baseUrl.substring(0, baseUrl.length - 1)
-            : baseUrl;
+    : baseUrl = baseUrl.endsWith("/")
+          ? baseUrl.substring(0, baseUrl.length - 1)
+          : baseUrl;
 
-  Map<String, String> _headers({String? token, String? geminiKey}) {
+  Map<String, String> _headers({
+    String? token,
+    String? geminiKey,
+    String? groqKey,
+  }) {
     final headers = <String, String>{"Content-Type": "application/json"};
     if (token != null && token.isNotEmpty) {
       headers["Authorization"] = "Bearer $token";
@@ -79,6 +83,9 @@ class ApiService {
     }
     if (geminiKey != null && geminiKey.trim().isNotEmpty) {
       headers["X-Gemini-Key"] = geminiKey.trim();
+    }
+    if (groqKey != null && groqKey.trim().isNotEmpty) {
+      headers["X-Groq-Key"] = groqKey.trim();
     }
     return headers;
   }
@@ -199,6 +206,7 @@ class ApiService {
     String? route,
     String? token,
     String? geminiKey,
+    String? groqKey,
   }) async {
     final uri = Uri.parse("$baseUrl/agents/run");
     final payload = <String, dynamic>{"task": task};
@@ -210,7 +218,7 @@ class ApiService {
     }
     final response = await http.post(
       uri,
-      headers: _headers(token: token, geminiKey: geminiKey),
+      headers: _headers(token: token, geminiKey: geminiKey, groqKey: groqKey),
       body: jsonEncode(payload),
     );
     if (response.statusCode != 200) {

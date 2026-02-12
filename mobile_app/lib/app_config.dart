@@ -7,11 +7,11 @@ class AppConfig {
       return override;
     }
     if (kIsWeb) {
-      return "http://localhost:8000";
+      return "http://206.189.18.29";
     }
     if (defaultTargetPlatform == TargetPlatform.android) {
-      return "http://localhost:8000";
+      return "http://206.189.18.29";
     }
-    return "http://localhost:8000";
+    return "http://206.189.18.29";
   }
 }

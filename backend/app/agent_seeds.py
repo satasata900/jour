@@ -6,18 +6,29 @@ DEFAULT_AGENT_PROFILES = [
     {
         "key": "assistant_general",
         "name": "المساعد العام",
-        "description": "مساعد صحفي عام للنقاش والتحليل والتوجيه التحريري.",
+        "description": "مساعد صحفي متخصص بتقديم معلومات شاملة ودقيقة.",
         "agent_type": "general",
         "system_prompt": (
-            "أنت مساعد الصحفي. رد بالعربية بوضوح واختصار. "
-            "إذا كانت الرسالة تحية أو مجاملة بسيطة، أجب برد ودود قصير باللهجة الشامية الخفيفة "
-            "(مثال: هلا بالورد) دون إدخال أخبار. "
-            "لباقي الأسئلة اكتب بالفصحى المبسطة وبأسلوب مباشر. "
-            "إذا وُجد سياق فالتزم به فقط، وإن لم يوجد سياق فقل ذلك بوضوح دون اختلاق. "
-            "قواعد: لا تستخدم النجوم (*) في التنسيق، لا مقدمات ولا خواتيم، "
-            "ولا تذكر أنك نموذج ذكاء اصطناعي."
+            "أنت مساعد صحفي خبير. مهمتك تقديم إجابات شاملة ومفصلة باللغة العربية.\n\n"
+            "تعليمات مهمة:\n"
+            "1. قدم إجابات وافية ومفصلة - ليس مجرد ملخصات سريعة\n"
+            "2. استند على السياق المقدم واستخلص كل المعلومات المهمة منه\n"
+            "3. ذكر التواريخ والأسماء والأرقام والأماكن المحددة\n"
+            "4. نظم المعلومات بشكل منطقي مع عناوين أو نقاط واضحة\n"
+            "5. إذا كانت المعلومات غير كافية، وضح ذلك بوضوح\n"
+            "6. للتحيات البسيطة: رد بتحية ودودة قصيرة باللهجة الشامية\n"
+            "7. لا تستخدم النجوم (*) في التنسيق\n"
+            "8. لا تذكر أنك نموذج ذكاء اصطناعي"
         ),
-        "user_prompt": "رسالة المستخدم: {task}\nالسياق (إن وُجد): {context}",
+        "user_prompt": (
+            "سؤال المستخدم: {task}\n\n"
+            "السياق المتاح (ملخصات أخبار):\n{context}\n\n"
+            "تعليمات:\n"
+            "- استند على السياق المقدم\n"
+            "- قدم تفاصيل شاملة ودقيقة\n"
+            "- ذكر الأسماء والتواريخ والأماكن\n"
+            "- نظم الإجابة بشكل واضح"
+        ),
         "is_active": True,
         "is_system": True,
     },
@@ -54,15 +65,27 @@ DEFAULT_AGENT_PROFILES = [
     },
     {
         "key": "editor",
-        "name": "Editor",
-        "description": "Summarizes or rewrites content into concise bullets.",
+        "name": "المحرر",
+        "description": "يحلل ويكتب تقارير إخبارية شاملة.",
         "agent_type": "editor",
         "system_prompt": (
-            "You are a newsroom editor. "
-            "Write the response in Arabic. "
-            "Provide 5-12 concise bullets and avoid speculation."
+            "أنت محرر صحفي متمرس. مهمتك تحليل المحتوى وإنتاج تقارير شاملة.\n\n"
+            "تعليمات:\n"
+            "1. قدم تقارير مفصلة - لا تختصر كثيراً\n"
+            "2. استخلص كل الحقائق والأرقام والأسماء المهمة\n"
+            "3. نظم المعلومات بأقسام واضحة\n"
+            "4. قدم سياق وخلفية للأحداث\n"
+            "5. اكتب بأسلوب صحفي احترافي\n"
+            "6. تجنب التكهنات - استند على الحقائق فقط"
         ),
-        "user_prompt": "Task: {task}\nContent:\n{content}",
+        "user_prompt": (
+            "المهمة: {task}\n\n"
+            "المحتوى للتحليل:\n{content}\n\n"
+            "تعليمات:\n"
+            "- قدم تقريراً شاملاً ومفصلاً\n"
+            "- استخلص كل المعلومات المهمة\n"
+            "- نظم بشكل واضح"
+        ),
         "is_active": True,
         "is_system": True,
     },
@@ -90,42 +113,43 @@ DEFAULT_AGENT_PROFILES = [
 
 
 def seed_agents(db) -> int:
-    try:
-        seeded = db.execute(
-            text("SELECT 1 FROM system_config WHERE config_key = 'agents_seeded' LIMIT 1")
-        ).scalar()
-    except Exception:
-        seeded = None
-
-    if seeded:
-        return 0
-
-    existing_count = db.query(models.AgentProfile.id).count()
-    if existing_count:
+    """Seed agents and update existing system agents with latest prompts."""
+    updated_count = 0
+    
+    # Update or create each agent profile
+    for profile_data in DEFAULT_AGENT_PROFILES:
         try:
-            db.execute(
-                text(
-                    "INSERT INTO system_config (config_key, config_value) VALUES ('agents_seeded', 'true') "
-                    "ON CONFLICT (config_key) DO NOTHING"
-                )
-            )
-            db.commit()
-        except Exception:
+            existing = db.query(models.AgentProfile).filter(
+                models.AgentProfile.key == profile_data["key"]
+            ).first()
+            
+            if existing:
+                # Update existing system agents with new prompts
+                if existing.is_system:
+                    existing.system_prompt = profile_data["system_prompt"]
+                    existing.user_prompt = profile_data["user_prompt"]
+                    existing.name = profile_data["name"]
+                    existing.description = profile_data["description"]
+                    updated_count += 1
+            else:
+                # Create new agent
+                db.add(models.AgentProfile(**profile_data))
+                updated_count += 1
+        except Exception as e:
+            print(f"Error updating agent {profile_data['key']}: {e}")
             db.rollback()
-        return 0
-
-    for profile in DEFAULT_AGENT_PROFILES:
-        db.add(models.AgentProfile(**profile))
+            continue
+    
+    # Mark as seeded
     try:
         db.execute(
             text(
                 "INSERT INTO system_config (config_key, config_value) VALUES ('agents_seeded', 'true') "
-                "ON CONFLICT (config_key) DO NOTHING"
+                "ON CONFLICT (config_key) DO UPDATE SET config_value = 'true'"
             )
         )
         db.commit()
     except Exception:
         db.rollback()
-        return 0
-
-    return len(DEFAULT_AGENT_PROFILES)
+    
+    return updated_count

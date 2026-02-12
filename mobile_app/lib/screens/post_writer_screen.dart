@@ -9,7 +9,6 @@ import "../widgets/chat_bubble.dart";
 
 enum PostInputMode { ideas, summary }
 
-
 class PostWriterScreen extends StatefulWidget {
   final Agent agent;
 
@@ -124,10 +123,10 @@ class _PostWriterScreenState extends State<PostWriterScreen> {
       final bullet = trimmed.startsWith("- ")
           ? trimmed.substring(2)
           : trimmed.startsWith("• ")
-              ? trimmed.substring(2)
-              : trimmed.startsWith("– ")
-                  ? trimmed.substring(2)
-                  : trimmed;
+          ? trimmed.substring(2)
+          : trimmed.startsWith("– ")
+          ? trimmed.substring(2)
+          : trimmed;
       filtered.add(bullet.trim());
     }
     cleaned = filtered.join("\n").trim();
@@ -170,14 +169,17 @@ class _PostWriterScreenState extends State<PostWriterScreen> {
         context: contextText,
         route: widget.agent.key,
         token: state.authToken,
-        geminiKey: state.geminiKey,
+        geminiKey: state.llmProvider == "gemini" ? state.geminiKey : null,
+        groqKey: state.llmProvider == "groq" ? state.groqKey : null,
       );
       if (!mounted) {
         return;
       }
       final output = _cleanOutput(result.output);
       setState(() {
-        _messages.add(ChatMessage.assistant(output.isEmpty ? result.output : output));
+        _messages.add(
+          ChatMessage.assistant(output.isEmpty ? result.output : output),
+        );
       });
     } catch (_) {
       if (!mounted) {
@@ -201,7 +203,9 @@ class _PostWriterScreenState extends State<PostWriterScreen> {
         decoration: BoxDecoration(
           color: theme.colorScheme.surface.withOpacity(0.9),
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: theme.colorScheme.outline.withOpacity(0.25)),
+          border: Border.all(
+            color: theme.colorScheme.outline.withOpacity(0.25),
+          ),
         ),
         child: Row(
           children: [
@@ -211,10 +215,7 @@ class _PostWriterScreenState extends State<PostWriterScreen> {
               child: CircularProgressIndicator(strokeWidth: 2),
             ),
             const SizedBox(width: 12),
-            Text(
-              "جارٍ تحميل الملخص...",
-              style: theme.textTheme.bodyMedium,
-            ),
+            Text("جارٍ تحميل الملخص...", style: theme.textTheme.bodyMedium),
           ],
         ),
       );
@@ -226,7 +227,9 @@ class _PostWriterScreenState extends State<PostWriterScreen> {
         decoration: BoxDecoration(
           color: theme.colorScheme.surface.withOpacity(0.9),
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: theme.colorScheme.outline.withOpacity(0.25)),
+          border: Border.all(
+            color: theme.colorScheme.outline.withOpacity(0.25),
+          ),
         ),
         child: Row(
           children: [
@@ -253,7 +256,9 @@ class _PostWriterScreenState extends State<PostWriterScreen> {
         decoration: BoxDecoration(
           color: theme.colorScheme.surface.withOpacity(0.9),
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: theme.colorScheme.outline.withOpacity(0.25)),
+          border: Border.all(
+            color: theme.colorScheme.outline.withOpacity(0.25),
+          ),
         ),
         child: Row(
           children: [
@@ -263,10 +268,7 @@ class _PostWriterScreenState extends State<PostWriterScreen> {
                 style: theme.textTheme.bodyMedium,
               ),
             ),
-            TextButton(
-              onPressed: _loadSummary,
-              child: const Text("تحديث"),
-            ),
+            TextButton(onPressed: _loadSummary, child: const Text("تحديث")),
           ],
         ),
       );
@@ -291,10 +293,7 @@ class _PostWriterScreenState extends State<PostWriterScreen> {
                   style: theme.textTheme.titleSmall,
                 ),
               ),
-              TextButton(
-                onPressed: _loadSummary,
-                child: const Text("تحديث"),
-              ),
+              TextButton(onPressed: _loadSummary, child: const Text("تحديث")),
             ],
           ),
           const SizedBox(height: 8),
@@ -316,10 +315,7 @@ class _PostWriterScreenState extends State<PostWriterScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.agent.name),
-        centerTitle: true,
-      ),
+      appBar: AppBar(title: Text(widget.agent.name), centerTitle: true),
       body: Stack(
         children: [
           Container(
@@ -383,7 +379,8 @@ class _PostWriterScreenState extends State<PostWriterScreen> {
                       },
                     ),
                     const SizedBox(height: 12),
-                    if (_mode == PostInputMode.summary) _buildSummaryCard(theme),
+                    if (_mode == PostInputMode.summary)
+                      _buildSummaryCard(theme),
                   ],
                 ),
               ),
@@ -418,7 +415,8 @@ class _PostWriterScreenState extends State<PostWriterScreen> {
                               Text(
                                 "الناتج سيكون جاهزاً للنسخ والنشر مباشرة",
                                 style: theme.textTheme.bodySmall?.copyWith(
-                                  color: theme.colorScheme.onSurface.withOpacity(0.6),
+                                  color: theme.colorScheme.onSurface
+                                      .withOpacity(0.6),
                                 ),
                                 textAlign: TextAlign.center,
                               ),
@@ -466,7 +464,10 @@ class _PostWriterScreenState extends State<PostWriterScreen> {
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 10,
+                    ),
                     decoration: BoxDecoration(
                       color: theme.colorScheme.surface.withOpacity(0.92),
                       borderRadius: BorderRadius.circular(26),
@@ -489,7 +490,8 @@ class _PostWriterScreenState extends State<PostWriterScreen> {
                             minLines: 1,
                             maxLines: 4,
                             textInputAction: TextInputAction.send,
-                            onChanged: (value) => setState(() => _draft = value),
+                            onChanged: (value) =>
+                                setState(() => _draft = value),
                             onSubmitted: (_) => _canSend ? _send() : null,
                             decoration: InputDecoration(
                               hintText: _mode == PostInputMode.summary
@@ -507,14 +509,13 @@ class _PostWriterScreenState extends State<PostWriterScreen> {
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             gradient: const LinearGradient(
-                              colors: [
-                                Color(0xFF23C08B),
-                                Color(0xFF3BE7B0),
-                              ],
+                              colors: [Color(0xFF23C08B), Color(0xFF3BE7B0)],
                             ),
                             boxShadow: [
                               BoxShadow(
-                                color: const Color(0xFF23C08B).withOpacity(0.35),
+                                color: const Color(
+                                  0xFF23C08B,
+                                ).withOpacity(0.35),
                                 blurRadius: 12,
                                 offset: const Offset(0, 6),
                               ),

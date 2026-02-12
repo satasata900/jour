@@ -23,6 +23,8 @@ class AppState extends ChangeNotifier {
   bool isBusy = false;
   bool isSending = false;
   String? geminiKey;
+  String? groqKey;
+  String llmProvider = "gemini"; // "gemini" or "groq"
   final List<ChatMessage> messages = [];
   int chatRetentionDays = 7;
   int chatRetentionMin = 1;
@@ -39,6 +41,8 @@ class AppState extends ChangeNotifier {
   }
 
   bool get isAuthenticated => currentUser != null;
+
+  String? get selectedApiKey => llmProvider == "groq" ? groqKey : geminiKey;
 
   Future<void> _updateCurrentSessionId(int? sessionId) async {
     currentSessionId = sessionId;
@@ -128,28 +132,38 @@ class AppState extends ChangeNotifier {
         return null;
       }
 
-      List<SummaryEntry> summaries = await _db.searchSummaries(trimmed);
-      if (summaries.isEmpty && _isGeneralNewsQuery(trimmed)) {
-        summaries = await _db.getRecentSummaries(limit: 8);
-      }
-      if (summaries.isEmpty) {
+      // Check if query really needs context (avoid loading for simple questions)
+      if (!_needsContext(trimmed)) {
         return null;
       }
 
-      final buffer = StringBuffer();
-      buffer.writeln("سياق إخباري مختصر (للاستدلال فقط):");
-      for (final summary in summaries.take(8)) {
-        var content = summary.content.trim();
-        if (content.isEmpty) {
-          continue;
+      // Use SMART context search - extracts only relevant snippets
+      final snippets = await _db.searchSmartContext(trimmed, maxSnippets: 5);
+      if (snippets.isEmpty && _isGeneralNewsQuery(trimmed)) {
+        // Fallback to recent summaries but only take first 150 chars each
+        final summaries = await _db.getRecentSummaries(limit: 2);
+        if (summaries.isNotEmpty) {
+          final buffer = StringBuffer("سياق:");
+          for (final summary in summaries) {
+            final content = summary.content.trim();
+            if (content.isNotEmpty) {
+              final truncated = content.length > 150
+                  ? '${content.substring(0, 150)}...'
+                  : content;
+              buffer.writeln(" $truncated");
+            }
+          }
+          return buffer.toString();
         }
-        if (content.length > 500) {
-          content = "${content.substring(0, 500)}…";
-        }
-        buffer.writeln("- [${summary.periodType}] $content");
-        if (buffer.length > 6000) {
-          break;
-        }
+      }
+      if (snippets.isEmpty) {
+        return null;
+      }
+
+      // Build context from smart snippets only (much smaller!)
+      final buffer = StringBuffer("سياق:");
+      for (final snippet in snippets.take(4)) {
+        buffer.write(" ${snippet.snippet}");
       }
       final result = buffer.toString().trim();
       return result.isEmpty ? null : result;
@@ -157,6 +171,43 @@ class AppState extends ChangeNotifier {
       print("Failed to build smart context: $e");
       return null;
     }
+  }
+
+  bool _needsContext(String query) {
+    final lower = query.toLowerCase();
+    // Keywords that indicate the user wants factual/news information
+    final contextKeywords = [
+      'خبر',
+      'أخبار',
+      'news',
+      'حدث',
+      'حصل',
+      'صار',
+      'أمس',
+      'اليوم',
+      'وزير',
+      'رئيس',
+      'حكومة',
+      'بلد',
+      'قرار',
+      'قانون',
+      'حادث',
+      'مباراة',
+      'فريق',
+      'منتخب',
+      'سوريا',
+      'لبنان',
+      'أمريكا',
+      'company',
+      'report',
+      'announced',
+      'launched',
+      'released',
+    ];
+    for (final keyword in contextKeywords) {
+      if (lower.contains(keyword)) return true;
+    }
+    return false;
   }
 
   Future<void> loadSession() async {
@@ -169,6 +220,14 @@ class AppState extends ChangeNotifier {
         authToken = token;
         currentUser = user;
         geminiKey = await storage.readGeminiKeyForUser(user.username);
+        groqKey = await storage.readGroqKeyForUser(user.username);
+        final savedProvider = await storage.readLlmProviderForUser(
+          user.username,
+        );
+        if (savedProvider != null &&
+            (savedProvider == "gemini" || savedProvider == "groq")) {
+          llmProvider = savedProvider;
+        }
         if (geminiKey == null) {
           final legacy = await storage.readGeminiKey();
           final storedEmail = await storage.readEmail();
@@ -226,6 +285,14 @@ class AppState extends ChangeNotifier {
       await storage.saveToken(result.token);
       await storage.saveEmail(email);
       geminiKey = await storage.readGeminiKeyForUser(result.user.username);
+      groqKey = await storage.readGroqKeyForUser(result.user.username);
+      final savedProvider = await storage.readLlmProviderForUser(
+        result.user.username,
+      );
+      if (savedProvider != null &&
+          (savedProvider == "gemini" || savedProvider == "groq")) {
+        llmProvider = savedProvider;
+      }
 
       try {
         syncService.syncSummaries(token: result.token);
@@ -268,6 +335,14 @@ class AppState extends ChangeNotifier {
       await storage.saveToken(result.token);
       await storage.saveEmail(email);
       geminiKey = await storage.readGeminiKeyForUser(result.user.username);
+      groqKey = await storage.readGroqKeyForUser(result.user.username);
+      final savedProvider = await storage.readLlmProviderForUser(
+        result.user.username,
+      );
+      if (savedProvider != null &&
+          (savedProvider == "gemini" || savedProvider == "groq")) {
+        llmProvider = savedProvider;
+      }
 
       try {
         syncService.syncSummaries(token: result.token);
@@ -277,8 +352,9 @@ class AppState extends ChangeNotifier {
 
       if (geminiKey != null) {
         try {
-          final config =
-              await apiService.fetchMobileConfig(token: result.token);
+          final config = await apiService.fetchMobileConfig(
+            token: result.token,
+          );
           localAgentService.init(geminiKey!, config);
         } catch (e) {
           print("Failed to init local agent on register: $e");
@@ -304,6 +380,8 @@ class AppState extends ChangeNotifier {
     authToken = null;
     currentUser = null;
     geminiKey = null;
+    groqKey = null;
+    llmProvider = "gemini";
     messages.clear();
     localAgentService.clearHistory();
     telegramPreferences = null;
@@ -396,21 +474,32 @@ class AppState extends ChangeNotifier {
       // 3. Generate Response via backend agent profile
       if (authToken == null) {
         messages.add(
-          ChatMessage.system(
-            "يرجى تسجيل الدخول أولاً لاستخدام المساعد.",
-          ),
+          ChatMessage.system("يرجى تسجيل الدخول أولاً لاستخدام المساعد."),
         );
         isSending = false;
         notifyListeners();
         return;
       }
-      final context = await _buildSmartContext(prompt);
+
+      // Build context with timeout to avoid blocking UI
+      String? context;
+      try {
+        context = await _buildSmartContext(prompt).timeout(
+          const Duration(milliseconds: 500),
+          onTimeout: () => null, // Skip context if taking too long
+        );
+      } catch (e) {
+        print("Context building error: $e");
+        context = null;
+      }
+
       final result = await apiService.runAgent(
         task: prompt,
         context: context,
         route: route ?? defaultAgentKey,
         token: authToken,
-        geminiKey: geminiKey,
+        geminiKey: llmProvider == "gemini" ? geminiKey : null,
+        groqKey: llmProvider == "groq" ? groqKey : null,
       );
       output = result.output;
 
@@ -460,6 +549,41 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> updateGroqKey(String key) async {
+    if (currentUser != null) {
+      await storage.saveGroqKeyForUser(currentUser!.username, key);
+    } else {
+      await storage.saveGroqKey(key);
+    }
+    groqKey = key;
+    notifyListeners();
+  }
+
+  Future<void> updateLlmProvider(String provider) async {
+    final p = provider == "groq" ? "groq" : "gemini";
+    if (currentUser != null) {
+      await storage.saveLlmProviderForUser(currentUser!.username, p);
+    } else {
+      await storage.saveLlmProvider(p);
+    }
+    llmProvider = p;
+    notifyListeners();
+  }
+
+  Future<String?> loadLlmProvider() async {
+    if (currentUser == null) {
+      llmProvider = "gemini";
+      return null;
+    }
+    final saved = await storage.readLlmProviderForUser(currentUser!.username);
+    if (saved != null && (saved == "gemini" || saved == "groq")) {
+      llmProvider = saved;
+    } else {
+      llmProvider = "gemini";
+    }
+    return llmProvider;
+  }
+
   Future<String?> loadGeminiKey() async {
     if (currentUser == null) {
       geminiKey = null;
@@ -467,6 +591,15 @@ class AppState extends ChangeNotifier {
     }
     geminiKey = await storage.readGeminiKeyForUser(currentUser!.username);
     return geminiKey;
+  }
+
+  Future<String?> loadGroqKey() async {
+    if (currentUser == null) {
+      groqKey = null;
+      return null;
+    }
+    groqKey = await storage.readGroqKeyForUser(currentUser!.username);
+    return groqKey;
   }
 
   Future<void> refreshChatRetention() async {

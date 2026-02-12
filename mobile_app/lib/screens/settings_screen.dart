@@ -1,6 +1,6 @@
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:provider/provider.dart";
-import "package:url_launcher/url_launcher.dart";
 
 import "../state/app_state.dart";
 
@@ -13,8 +13,11 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final _geminiController = TextEditingController();
-  bool _hideKey = true;
-  bool _savingKey = false;
+  final _groqController = TextEditingController();
+  bool _hideGeminiKey = true;
+  bool _hideGroqKey = true;
+  bool _savingGeminiKey = false;
+  bool _savingGroqKey = false;
   bool _loadingRetention = true;
   bool _savingRetention = false;
   int _chatRetentionDays = 7;
@@ -24,7 +27,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
-    _loadKey();
+    _loadKeys();
     final user = context.read<AppState>().currentUser;
     if (user?.role == "admin") {
       _loadChatRetention();
@@ -33,11 +36,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _loadKey() async {
-    final key = await context.read<AppState>().loadGeminiKey();
-    if (mounted && key != null) {
-      setState(() => _geminiController.text = key);
+  Future<void> _loadKeys() async {
+    final state = context.read<AppState>();
+    final gemini = await state.loadGeminiKey();
+    final groq = await state.loadGroqKey();
+    await state.loadLlmProvider();
+    if (!mounted) {
+      return;
     }
+    setState(() {
+      _geminiController.text = gemini ?? "";
+      _groqController.text = groq ?? "";
+    });
   }
 
   Future<void> _loadChatRetention() async {
@@ -65,15 +75,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _saveKey() async {
-    if (_savingKey) {
+  Future<void> _saveGeminiKey() async {
+    if (_savingGeminiKey) {
       return;
     }
-    setState(() => _savingKey = true);
+    setState(() => _savingGeminiKey = true);
     try {
       await context.read<AppState>().updateGeminiKey(
-            _geminiController.text.trim(),
-          );
+        _geminiController.text.trim(),
+      );
       if (mounted) {
         ScaffoldMessenger.of(
           context,
@@ -87,7 +97,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
     } finally {
       if (mounted) {
-        setState(() => _savingKey = false);
+        setState(() => _savingGeminiKey = false);
+      }
+    }
+  }
+
+  Future<void> _saveGroqKey() async {
+    if (_savingGroqKey) {
+      return;
+    }
+    setState(() => _savingGroqKey = true);
+    try {
+      await context.read<AppState>().updateGroqKey(_groqController.text.trim());
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text("تم حفظ المفتاح بنجاح.")));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("تعذر حفظ المفتاح حالياً.")),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _savingGroqKey = false);
       }
     }
   }
@@ -96,8 +131,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (_savingRetention) {
       return;
     }
-    final clamped =
-        _chatRetentionDays.clamp(_chatRetentionMin, _chatRetentionMax).toInt();
+    final clamped = _chatRetentionDays
+        .clamp(_chatRetentionMin, _chatRetentionMax)
+        .toInt();
     setState(() => _savingRetention = true);
     try {
       await context.read<AppState>().updateChatRetentionDays(clamped);
@@ -119,14 +155,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _openGeminiKeyPage() async {
-    final uri = Uri.parse("https://aistudio.google.com/app/apikey");
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("تعذر فتح الرابط حالياً.")),
-      );
+  Future<void> _copyLink(String link) async {
+    await Clipboard.setData(ClipboardData(text: link));
+    if (mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("تم نسخ رابط المفتاح.")));
     }
   }
 
@@ -171,6 +205,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void dispose() {
     _geminiController.dispose();
+    _groqController.dispose();
     super.dispose();
   }
 
@@ -221,33 +256,110 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            "ادخل مفتاح Gemini الخاص بك",
-                            style: theme.textTheme.titleSmall?.copyWith(
-                              color: theme.colorScheme.onSurface,
-                            ),
-                          ),
-                        ),
-                        TextButton(
-                          onPressed: _openGeminiKeyPage,
-                          child: const Text("اضغط هنا لجلب المفتاح"),
-                        ),
-                      ],
+                    Text(
+                      "اختر مزود الذكاء الاصطناعي",
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        color: theme.colorScheme.onSurface,
+                      ),
                     ),
                     const SizedBox(height: 8),
+                    Consumer<AppState>(
+                      builder: (context, state, child) {
+                        return SegmentedButton<String>(
+                          segments: const [
+                            ButtonSegment(
+                              value: "gemini",
+                              label: Text("Gemini"),
+                              icon: Icon(Icons.auto_awesome),
+                            ),
+                            ButtonSegment(
+                              value: "groq",
+                              label: Text("Groq"),
+                              icon: Icon(Icons.speed),
+                            ),
+                          ],
+                          selected: {state.llmProvider},
+                          onSelectionChanged: (selection) {
+                            final provider = selection.first;
+                            state.updateLlmProvider(provider);
+                          },
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      "ادخل مفتاح Gemini الخاص بك",
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        color: theme.colorScheme.onSurface,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      "للحصول على المفتاح افتح الرابط التالي في المتصفح، ثم انسخه والصقه هنا.",
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurface.withOpacity(0.65),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      "رابط الحصول على المفتاح",
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurface.withOpacity(0.7),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Builder(
+                      builder: (context) {
+                        const link = "https://aistudio.google.com/app/apikey";
+                        return Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.surfaceVariant.withOpacity(
+                              0.6,
+                            ),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: theme.colorScheme.outline.withOpacity(0.2),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: SelectableText(
+                                  link,
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: theme.colorScheme.onSurface
+                                        .withOpacity(0.8),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              TextButton.icon(
+                                onPressed: () => _copyLink(link),
+                                icon: const Icon(Icons.copy_rounded, size: 16),
+                                label: const Text("نسخ الرابط"),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 10),
                     TextField(
                       controller: _geminiController,
-                      obscureText: _hideKey,
+                      obscureText: _hideGeminiKey,
                       decoration: InputDecoration(
                         labelText: "Gemini API Key",
                         prefixIcon: const Icon(Icons.key_rounded),
                         suffixIcon: IconButton(
-                          onPressed: () => setState(() => _hideKey = !_hideKey),
+                          onPressed: () =>
+                              setState(() => _hideGeminiKey = !_hideGeminiKey),
                           icon: Icon(
-                            _hideKey
+                            _hideGeminiKey
                                 ? Icons.visibility_rounded
                                 : Icons.visibility_off_rounded,
                           ),
@@ -258,8 +370,104 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     Align(
                       alignment: Alignment.centerLeft,
                       child: FilledButton(
-                        onPressed: _savingKey ? null : _saveKey,
-                        child: _savingKey
+                        onPressed: _savingGeminiKey ? null : _saveGeminiKey,
+                        child: _savingGeminiKey
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Text("حفظ المفتاح"),
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    Text(
+                      "ادخل مفتاح Groq Cloud الخاص بك",
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        color: theme.colorScheme.onSurface,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      "يمكنك استخدام Groq Cloud كخيار بديل لتشغيل الوكلاء.",
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurface.withOpacity(0.65),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      "رابط الحصول على المفتاح",
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurface.withOpacity(0.7),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Builder(
+                      builder: (context) {
+                        const link = "https://console.groq.com/keys";
+                        return Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.surfaceVariant.withOpacity(
+                              0.6,
+                            ),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: theme.colorScheme.outline.withOpacity(0.2),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: SelectableText(
+                                  link,
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: theme.colorScheme.onSurface
+                                        .withOpacity(0.8),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              TextButton.icon(
+                                onPressed: () => _copyLink(link),
+                                icon: const Icon(Icons.copy_rounded, size: 16),
+                                label: const Text("نسخ الرابط"),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: _groqController,
+                      obscureText: _hideGroqKey,
+                      decoration: InputDecoration(
+                        labelText: "Groq API Key",
+                        prefixIcon: const Icon(Icons.vpn_key_rounded),
+                        suffixIcon: IconButton(
+                          onPressed: () =>
+                              setState(() => _hideGroqKey = !_hideGroqKey),
+                          icon: Icon(
+                            _hideGroqKey
+                                ? Icons.visibility_rounded
+                                : Icons.visibility_off_rounded,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: FilledButton(
+                        onPressed: _savingGroqKey ? null : _saveGroqKey,
+                        child: _savingGroqKey
                             ? const SizedBox(
                                 width: 18,
                                 height: 18,

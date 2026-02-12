@@ -256,12 +256,15 @@ def agents_run(
     user: models.User | None = Depends(require_user_or_admin_key),
     x_gemini_key: str | None = Header(default=None, alias="X-Gemini-Key"),
     x_openrouter_key: str | None = Header(default=None, alias="X-OpenRouter-Key"),
+    x_groq_key: str | None = Header(default=None, alias="X-Groq-Key"),
 ) -> Any:
     data = payload.model_dump(exclude_none=True)
     if x_gemini_key:
         data["gemini_api_key"] = x_gemini_key.strip()
     if x_openrouter_key:
         data["openrouter_api_key"] = x_openrouter_key.strip()
+    if x_groq_key:
+        data["groq_api_key"] = x_groq_key.strip()
     response = _call_agents("POST", "/agents/run", payload=data)
     if user and isinstance(response, dict):
         output = response.get("output")

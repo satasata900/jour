@@ -264,6 +264,7 @@ async def main() -> None:
                 current_ids = {str(dialog.id) for dialog in groups}
                 created = 0
                 renamed = 0
+                enabled = 0
                 disabled = 0
                 for dialog in groups:
                     identifier = str(dialog.id)
@@ -276,6 +277,11 @@ async def main() -> None:
                                 http, logger, existing["id"], {"name": name}
                             )
                             renamed += 1
+                        if existing.get("is_active") is False:
+                            await update_source(
+                                http, logger, existing["id"], {"is_active": True}
+                            )
+                            enabled += 1
                         continue
                     await create_source(
                         http,
@@ -295,11 +301,12 @@ async def main() -> None:
                                 http, logger, source["id"], {"is_active": False}
                             )
                             disabled += 1
-                if created or renamed or disabled:
+                if created or renamed or enabled or disabled:
                     logger.info(
-                        "Sources synced: added %d, renamed %d, disabled %d.",
+                        "Sources synced: added %d, renamed %d, enabled %d, disabled %d.",
                         created,
                         renamed,
+                        enabled,
                         disabled,
                     )
 

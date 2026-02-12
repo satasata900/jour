@@ -46,8 +46,9 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
     if (trimmed.isEmpty) {
       return widget.agent.name;
     }
-    final snippet =
-        trimmed.length > 30 ? "${trimmed.substring(0, 30)}..." : trimmed;
+    final snippet = trimmed.length > 30
+        ? "${trimmed.substring(0, 30)}..."
+        : trimmed;
     return "${widget.agent.name} - $snippet";
   }
 
@@ -63,11 +64,14 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
       });
       return;
     }
-    if (state.geminiKey == null || state.geminiKey!.isEmpty) {
+    final selectedKey = state.selectedApiKey;
+    if (selectedKey == null || selectedKey.isEmpty) {
       setState(() {
         _messages.add(
           ChatMessage.system(
-            "يرجى إدخال مفتاح Gemini في الإعدادات لتفعيل الوكيل.",
+            state.llmProvider == "groq"
+                ? "يرجى إدخال مفتاح Groq Cloud في الإعدادات لتفعيل الوكيل."
+                : "يرجى إدخال مفتاح Gemini في الإعدادات لتفعيل الوكيل.",
           ),
         );
       });
@@ -108,7 +112,8 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
         task: prompt,
         route: widget.agent.key,
         token: state.authToken,
-        geminiKey: state.geminiKey,
+        geminiKey: state.llmProvider == "gemini" ? state.geminiKey : null,
+        groqKey: state.llmProvider == "groq" ? state.groqKey : null,
       );
 
       if (!mounted) {
@@ -146,10 +151,7 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.agent.name),
-        centerTitle: true,
-      ),
+      appBar: AppBar(title: Text(widget.agent.name), centerTitle: true),
       body: Stack(
         children: [
           Container(
@@ -305,15 +307,13 @@ class _AgentChatScreenState extends State<AgentChatScreen> {
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             gradient: const LinearGradient(
-                              colors: [
-                                Color(0xFF23C08B),
-                                Color(0xFF3BE7B0),
-                              ],
+                              colors: [Color(0xFF23C08B), Color(0xFF3BE7B0)],
                             ),
                             boxShadow: [
                               BoxShadow(
-                                color:
-                                    const Color(0xFF23C08B).withOpacity(0.35),
+                                color: const Color(
+                                  0xFF23C08B,
+                                ).withOpacity(0.35),
                                 blurRadius: 12,
                                 offset: const Offset(0, 6),
                               ),

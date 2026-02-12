@@ -196,6 +196,7 @@ async function syncGroupSources(groups) {
   const currentIds = new Set(groups.map((group) => group.id).filter(Boolean));
   let created = 0;
   let renamed = 0;
+  let enabled = 0;
   let disabled = 0;
   for (const group of groups) {
     if (!group?.id) continue;
@@ -205,6 +206,10 @@ async function syncGroupSources(groups) {
       if (existing.name !== name) {
         await updateSource(existing.id, { name });
         renamed += 1;
+      }
+      if (existing.is_active === false) {
+        await updateSource(existing.id, { is_active: true });
+        enabled += 1;
       }
       continue;
     }
@@ -224,8 +229,10 @@ async function syncGroupSources(groups) {
       }
     }
   }
-  if (created > 0 || renamed > 0 || disabled > 0) {
-    console.log(`Sources synced: added ${created}, renamed ${renamed}, disabled ${disabled}.`);
+  if (created > 0 || renamed > 0 || enabled > 0 || disabled > 0) {
+    console.log(
+      `Sources synced: added ${created}, renamed ${renamed}, enabled ${enabled}, disabled ${disabled}.`,
+    );
   }
 }
 

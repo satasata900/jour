@@ -8,8 +8,10 @@ import '../models/summary_entry.dart';
 class LocalAgentService {
   final DatabaseHelper _db;
   GenerativeModel? _model;
-  // Memory for current session
+  // Memory for current session - limited to prevent token bloat
   final List<Content> _history = [];
+  static const int _maxHistoryMessages =
+      20; // Keep last 10 exchanges (20 messages)
 
   LocalAgentService() : _db = DatabaseHelper();
 
@@ -26,14 +28,26 @@ class LocalAgentService {
         _history.add(Content('model', [TextPart(message.content)]));
       }
     }
+    _truncateHistory();
+  }
+
+  void _truncateHistory() {
+    if (_history.length > _maxHistoryMessages) {
+      // Remove oldest messages (keep pairs together)
+      final excess = _history.length - _maxHistoryMessages;
+      _history.removeRange(0, excess);
+    }
   }
 
   void init(String apiKey, MobileConfig config) {
+    // Cap max tokens to save costs - most responses don't need more than 800
+    final maxTokens = (config.maxTokens > 800) ? 800 : config.maxTokens;
+
     _model = GenerativeModel(
       model: config.model,
       apiKey: apiKey,
       generationConfig: GenerationConfig(
-        maxOutputTokens: config.maxTokens,
+        maxOutputTokens: maxTokens,
         temperature: config.temperature,
       ),
       safetySettings: [
@@ -44,11 +58,14 @@ class LocalAgentService {
       ],
       systemInstruction: Content.system(
         "${config.systemPrompt}\n\n"
-        "قواعد صارمة:\n"
-        "1. لا تستخدم النجوم (*) في التنسيق.\n"
-        "2. كن مباشراً: لا مقدمات ولا خواتم.\n"
-        "3. قدم المعلومات بشكل ملخص وسهل القراءة.\n"
-        "4. أنت 'مساعد الصحفي' (أنشأه حسان قدور - أبو نوح).",
+        "تعليمات إضافية للجودة:\n"
+        "1. لا تستخدم النجوم (*) في التنسيق\n"
+        "2. قدم إجابات شاملة ومفصلة - ليس فقط ملخصات سريعة\n"
+        "3. استند دائماً على السياق المقدم\n"
+        "4. ذكر التواريخ والأسماء والأرقام المحددة\n"
+        "5. نظم المعلومات بشكل واضح مع عناوين أو نقاط\n"
+        "6. إذا كانت المعلومات غير كافية، وضح ذلك بوضوح\n"
+        "7. أنت 'مساعد الصحفي' (أنشأه حسان قدور - أبو نوح).",
       ),
     );
   }
@@ -59,27 +76,30 @@ class LocalAgentService {
     }
 
     try {
-      // 1. Fetch relevant context
-      final summaries = await _fetchContext(userMessage);
-
-      final contextBuffer = StringBuffer();
-      if (summaries.isNotEmpty) {
-        contextBuffer.writeln("السياق الإخباري المتوفر من قاعدة البيانات:");
-        for (var s in summaries) {
-          contextBuffer.writeln("- [${s.periodType}] ${s.content}");
+      // 1. Fetch relevant context (only if needed)
+      String? contextStr;
+      if (_needsContext(userMessage)) {
+        final summaries = await _fetchContext(userMessage);
+        if (summaries.isNotEmpty) {
+          final buffer = StringBuffer("سياق:");
+          for (var s in summaries.take(2)) {
+            // Reduced from unlimited to 2
+            final content = s.content.length > 200
+                ? "${s.content.substring(0, 200)}..."
+                : s.content;
+            buffer.write(" $content");
+          }
+          contextStr = buffer.toString();
         }
       }
 
-      // 2. Build the final prompt with context separation
+      // 2. Build the final prompt efficiently
       String fullPrompt;
-      if (summaries.isEmpty) {
+      if (contextStr == null) {
         // Force conversational mode if no news context is found
-        fullPrompt = "User says: '$userMessage'\n"
-            "This is a casual chat message. Reply naturally and briefly in Arabic. "
-            "Do NOT offer news unless explicitly asked. Do NOT say 'How can I help you' if it's just a greeting.";
+        fullPrompt = "$userMessage";
       } else {
-        fullPrompt = "${contextBuffer.toString()}\n\n"
-            "بناءً على السياق أعلاه، أجب على حوار المستخدم التالي بوضوح واختصار: $userMessage";
+        fullPrompt = "$contextStr | سؤال: $userMessage";
       }
 
       // 3. Use Chat Session for Memory
@@ -89,11 +109,12 @@ class LocalAgentService {
       final responseText =
           response.text?.replaceAll('*', '').trim() ?? "رد فارغ.";
 
-      // 4. Update memory (Full history enabled)
+      // 4. Update memory (Limited history to save tokens)
       _history.add(Content('user', [TextPart(userMessage)]));
       _history.add(Content('model', [TextPart(responseText)]));
+      _truncateHistory(); // Keep history size manageable
 
-      print("DEBUG Agent: Found ${summaries.length} summaries in DB context.");
+      print("DEBUG Agent: History size: ${_history.length} messages");
       return responseText;
     } catch (e) {
       if (e.toString().contains("API_KEY_INVALID")) {
@@ -110,17 +131,44 @@ class LocalAgentService {
       return [];
     }
 
+    // Use SMART context search first (extracts only relevant lines)
+    final snippets = await _db.searchSmartContext(query, maxSnippets: 3);
+    if (snippets.isNotEmpty) {
+      // Convert snippets back to SummaryEntry format for compatibility
+      return snippets
+          .map((s) => SummaryEntry(
+                id: 0,
+                periodType: s.periodType,
+                periodStart: s.periodStart,
+                periodEnd: s.periodStart,
+                content: s.snippet,
+                createdAt: DateTime.now(),
+              ))
+          .toList();
+    }
+
     final dateRange = _detectDateRange(query);
     final isGeneral = _isGeneralNewsQuery(query);
 
     if (isGeneral) {
-      return await _db.getRecentSummaries(limit: 50);
+      // Fallback: get recent summaries but extract only first 150 chars
+      final summaries = await _db.getRecentSummaries(limit: 2);
+      return summaries
+          .map((s) => SummaryEntry(
+                id: s.id,
+                periodType: s.periodType,
+                periodStart: s.periodStart,
+                periodEnd: s.periodEnd,
+                content: s.content.length > 150
+                    ? '${s.content.substring(0, 150)}...'
+                    : s.content,
+                createdAt: s.createdAt,
+              ))
+          .toList();
     } else if (dateRange != null) {
       return await _db.getSummariesByDateRange(dateRange.$1, dateRange.$2);
     } else {
       // 2. Specific search
-      // Only return search results if they actually exist.
-      // Do NOT fallback to recent news, as it confuses general chat.
       return await _db.searchSummaries(query);
     }
   }
@@ -179,6 +227,42 @@ class LocalAgentService {
     ];
     for (final k in keywords) {
       if (t.contains(k)) return true;
+    }
+    return false;
+  }
+
+  bool _needsContext(String query) {
+    final lower = query.toLowerCase();
+    final contextKeywords = [
+      'خبر',
+      'أخبار',
+      'news',
+      'حدث',
+      'حصل',
+      'صار',
+      'أمس',
+      'اليوم',
+      'وزير',
+      'رئيس',
+      'حكومة',
+      'بلد',
+      'قرار',
+      'قانون',
+      'حادث',
+      'مباراة',
+      'فريق',
+      'منتخب',
+      'سوريا',
+      'لبنان',
+      'أمريكا',
+      'company',
+      'report',
+      'announced',
+      'launched',
+      'released',
+    ];
+    for (final keyword in contextKeywords) {
+      if (lower.contains(keyword)) return true;
     }
     return false;
   }

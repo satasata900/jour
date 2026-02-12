@@ -58,14 +58,30 @@ DEFAULT_AGENT_DEFS: dict[str, dict[str, Any]] = {
     "editor": {
         "key": "editor",
         "name": "Editor",
-        "description": "Summarizes or rewrites content into concise bullets.",
+        "description": "Summarizes or rewrites content into comprehensive reports.",
         "agent_type": "editor",
         "system_prompt": (
-            "You are a newsroom editor. "
-            "Write the response in Arabic. "
-            "Provide 5-12 concise bullets and avoid speculation."
+            "You are a senior newsroom editor. Your job is to create comprehensive, "
+            "well-structured reports from the provided content.\n\n"
+            "CRITICAL INSTRUCTIONS:\n"
+            "1. Create detailed, comprehensive reports - not just brief bullets\n"
+            "2. Include all important facts, figures, names, and dates from the content\n"
+            "3. Organize information logically with clear sections\n"
+            "4. Provide context and background when relevant\n"
+            "5. Highlight key developments and their significance\n"
+            "6. Write in professional Arabic journalistic style\n"
+            "7. If rewriting, maintain all factual information while improving clarity\n"
+            "8. Minimum 3-4 detailed paragraphs or 8-15 comprehensive bullet points"
         ),
-        "user_prompt": "Task: {task}\nContent:\n{content}",
+        "user_prompt": (
+            "TASK: {task}\n\n"
+            "CONTENT TO ANALYZE:\n{content}\n\n"
+            "INSTRUCTIONS:\n"
+            "- Create a comprehensive report\n"
+            "- Include all key details\n"
+            "- Organize with clear structure\n"
+            "- Provide context and analysis"
+        ),
         "is_active": True,
     },
     "search": {
@@ -82,16 +98,38 @@ DEFAULT_AGENT_DEFS: dict[str, dict[str, Any]] = {
         "name": "General",
         "description": "Handles general newsroom tasks.",
         "agent_type": "general",
-        "system_prompt": "You are a newsroom assistant. Write the response in Arabic.",
-        "user_prompt": "Task: {task}\nContext: {context}",
+        "system_prompt": (
+            "You are an expert newsroom AI assistant. Your role is to provide comprehensive, "
+            "accurate, and well-structured responses to news-related queries.\n\n"
+            "CRITICAL INSTRUCTIONS:\n"
+            "1. ALWAYS use the provided context to answer - it contains relevant news summaries\n"
+            "2. If context is provided, base your answer primarily on it\n"
+            "3. Provide detailed responses with specific facts, numbers, and names when available\n"
+            "4. Structure your response with clear sections or bullet points\n"
+            "5. If information is missing from context, clearly state what is known vs unknown\n"
+            "6. Write in formal Arabic journalistic style\n"
+            "7. Include dates, locations, and key figures mentioned in the context\n"
+            "8. Synthesize information from multiple sources if multiple summaries are provided"
+        ),
+        "user_prompt": (
+            "TASK: {task}\n\n"
+            "AVAILABLE CONTEXT (News Summaries):\n{context}\n\n"
+            "INSTRUCTIONS:\n"
+            "- Answer based on the context above\n"
+            "- Provide comprehensive details\n"
+            "- Include specific facts, dates, and names\n"
+            "- Structure with clear sections"
+        ),
         "is_active": True,
     },
 }
 
 DEFAULT_GEMINI_AGENT_MODEL = "gemini-2.0-flash"
 DEFAULT_OPENROUTER_MODEL = "openrouter/auto"
+DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
 DEFAULT_AGENT_PROVIDER = "openrouter"
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+DEFAULT_GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
 # OpenRouter fallback chain: try free models first, then cheap paid ones
 # Order: Best free models → Good free models → Cheap paid models
@@ -120,10 +158,11 @@ class AgentRequest(BaseModel):
     task: str = Field(..., min_length=1)
     context: str | None = None
     route: str | None = None
-    window_hours: int | None = Field(default=24, ge=1, le=168)
+    window_hours: int | None = Field(default=6, ge=1, le=168)  # Reduced default to save tokens
     max_items: int | None = Field(default=50, ge=1, le=200)
     gemini_api_key: str | None = None
     openrouter_api_key: str | None = None
+    groq_api_key: str | None = None
 
 
 class AgentResponse(BaseModel):
@@ -163,20 +202,27 @@ def _get_llm_provider() -> str:
     provider = _get_config_value(
         "agent_llm_provider", "AGENT_LLM_PROVIDER", DEFAULT_AGENT_PROVIDER
     ).strip().lower()
-    if provider not in {"openrouter", "gemini"}:
+    if provider not in {"openrouter", "gemini", "groq"}:
         return DEFAULT_AGENT_PROVIDER
     return provider
 
 
 def _get_agent_model(provider: str) -> str:
-    default = (
-        DEFAULT_OPENROUTER_MODEL if provider == "openrouter" else DEFAULT_GEMINI_AGENT_MODEL
-    )
+    if provider == "openrouter":
+        default = DEFAULT_OPENROUTER_MODEL
+    elif provider == "groq":
+        default = DEFAULT_GROQ_MODEL
+    else:
+        default = DEFAULT_GEMINI_AGENT_MODEL
     model = _get_config_value("agent_llm_model", "AGENT_LLM_MODEL", default).strip()
     if not model:
         model = default
     if provider == "openrouter":
         if model.startswith("gemini") or model.startswith("models/"):
+            model = default
+        return model
+    if provider == "groq":
+        if model.startswith("gemini") or model.startswith("models/") or "/" in model:
             model = default
         return model
     if "/" in model and not model.startswith("models/"):
@@ -208,6 +254,19 @@ def _get_openrouter_config(
     base_url = os.getenv("OPENROUTER_BASE_URL", DEFAULT_OPENROUTER_BASE_URL).strip()
     if not base_url:
         base_url = DEFAULT_OPENROUTER_BASE_URL
+    return api_key, model, base_url.rstrip("/")
+
+
+def _get_groq_config(api_key_override: str | None = None) -> tuple[str, str, str]:
+    api_key = (
+        api_key_override or _get_config_value("groq_api_key", "GROQ_API_KEY", "")
+    ).strip()
+    if not api_key:
+        raise RuntimeError("GROQ_API_KEY is missing.")
+    model = _get_agent_model("groq")
+    base_url = _get_config_value("groq_base_url", "GROQ_BASE_URL", DEFAULT_GROQ_BASE_URL).strip()
+    if not base_url:
+        base_url = DEFAULT_GROQ_BASE_URL
     return api_key, model, base_url.rstrip("/")
 
 
@@ -415,18 +474,72 @@ def _call_openrouter(
     raise last_error or RuntimeError("All OpenRouter models failed")
 
 
+def _call_groq(
+    messages: list[Any],
+    temperature: float = 0.2,
+    api_key_override: str | None = None,
+) -> str:
+    api_key, model, base_url = _get_groq_config(api_key_override)
+    url = f"{base_url}/chat/completions"
+    payload = {
+        "model": model,
+        "messages": _messages_to_openai(messages),
+        "temperature": temperature,
+        "max_tokens": 1024,
+    }
+    data = json.dumps(payload).encode("utf-8")
+    request = Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+    )
+    try:
+        with urlopen(request, timeout=60) as response:
+            body = response.read().decode("utf-8")
+        parsed = json.loads(body)
+    except HTTPError as exc:
+        body = exc.read().decode("utf-8") if exc.fp else str(exc)
+        raise RuntimeError(f"Groq error {exc.code}: {body}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Groq network error: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise RuntimeError("Groq timeout") from exc
+
+    choices = parsed.get("choices") or []
+    if not choices:
+        raise RuntimeError("Groq response missing choices.")
+    message = choices[0].get("message") or {}
+    text = message.get("content")
+    if not text:
+        raise RuntimeError("Groq response missing content.")
+    return str(text).strip()
+
+
 def _invoke_llm(
     messages: list[Any],
     temperature: float = 0.2,
     gemini_api_key_override: str | None = None,
     openrouter_api_key_override: str | None = None,
+    groq_api_key_override: str | None = None,
 ) -> str:
     provider = _get_llm_provider()
+    if groq_api_key_override and groq_api_key_override.strip():
+        provider = "groq"
+    elif openrouter_api_key_override and openrouter_api_key_override.strip():
+        provider = "openrouter"
+    elif gemini_api_key_override and gemini_api_key_override.strip():
+        provider = "gemini"
     if provider == "openrouter":
         return _call_openrouter(
             messages,
             temperature=temperature,
             api_key_override=openrouter_api_key_override,
+        )
+    if provider == "groq":
+        return _call_groq(
+            messages,
+            temperature=temperature,
+            api_key_override=groq_api_key_override,
         )
     prompt = _messages_to_prompt(messages)
     return _call_gemini(
@@ -468,8 +581,11 @@ def _load_profiles() -> list[dict[str, Any]]:
         agent_type = profile.get("agent_type")
         defaults = DEFAULT_AGENT_DEFS.get(agent_type)
         if defaults:
+            # Always use latest default prompts for system agents
+            # This ensures prompt improvements are applied immediately
+            is_system = profile.get("is_system", False)
             for field in ("system_prompt", "user_prompt"):
-                if not profile.get(field):
+                if is_system or not profile.get(field):
                     profile[field] = defaults[field]
     return profiles
 
@@ -509,6 +625,7 @@ def _route_task(
     profiles: list[dict[str, Any]],
     gemini_api_key_override: str | None = None,
     openrouter_api_key_override: str | None = None,
+    groq_api_key_override: str | None = None,
 ) -> RouteDecision:
     active_profiles = _active_profiles(profiles)
     available = [
@@ -547,6 +664,7 @@ def _route_task(
                 temperature=0.0,
                 gemini_api_key_override=gemini_api_key_override,
                 openrouter_api_key_override=openrouter_api_key_override,
+                groq_api_key_override=groq_api_key_override,
             )
             decision = _parse_route_decision(content)
             decision.route = decision.route.strip().lower()
@@ -613,18 +731,18 @@ def _fetch_latest_summary() -> dict[str, Any] | None:
         return None
 
 
-def _fetch_summaries_for_context(hours: int = 24) -> str:
+def _fetch_summaries_for_context(hours: int = 6) -> str:
     """
-    Fetch relevant summaries for agent context.
+    Fetch relevant summaries for agent context - OPTIMIZED for token efficiency.
     Prioritizes: daily > interval summaries within the time window.
-    Returns formatted text suitable for LLM context.
+    Returns SHORT formatted text to minimize token usage.
     """
     end = datetime.now(timezone.utc)
     start = end - timedelta(hours=hours)
     
     try:
         with SessionLocal() as db:
-            # First try to get daily summary for today
+            # First try to get daily summary for today (most concise)
             daily = db.execute(
                 text(
                     """
@@ -640,10 +758,11 @@ def _fetch_summaries_for_context(hours: int = 24) -> str:
             ).fetchone()
             
             if daily and daily.content:
-                period_label = f"ملخص يومي ({daily.period_start:%Y-%m-%d})"
-                return f"### {period_label}\n{daily.content}"
+                # Truncate daily summary to reduce tokens
+                content = daily.content[:800] + "..." if len(daily.content) > 800 else daily.content
+                return f"سياق: {content}"
             
-            # Fall back to interval summaries
+            # Fall back to interval summaries - reduced from 5 to 2
             intervals = db.execute(
                 text(
                     """
@@ -652,19 +771,21 @@ def _fetch_summaries_for_context(hours: int = 24) -> str:
                     WHERE period_type = 'interval'
                     AND period_end >= :start
                     ORDER BY period_end DESC
-                    LIMIT 5
+                    LIMIT 2
                     """
                 ),
                 {"start": start},
             ).fetchall()
             
             if intervals:
-                lines = ["### ملخصات الفترة الأخيرة"]
+                lines = []
                 for row in intervals:
-                    time_label = row.period_end.strftime("%Y-%m-%d %H:%M") if row.period_end else ""
-                    lines.append(f"\n#### ملخص {time_label}")
-                    lines.append(row.content or "")
-                return "\n".join(lines)
+                    # Truncate each summary to 300 chars max
+                    content = (row.content or "")[:300]
+                    if len(row.content or "") > 300:
+                        content += "..."
+                    lines.append(content)
+                return "سياق: " + " | ".join(lines)
             
             # Final fallback: any recent summary
             any_summary = db.execute(
@@ -679,8 +800,8 @@ def _fetch_summaries_for_context(hours: int = 24) -> str:
             ).fetchone()
             
             if any_summary and any_summary.content:
-                period_label = f"آخر ملخص ({any_summary.period_type})"
-                return f"### {period_label}\n{any_summary.content}"
+                content = any_summary.content[:500] + "..." if len(any_summary.content) > 500 else any_summary.content
+                return f"سياق: {content}"
             
             return ""
     except Exception as exc:
@@ -702,6 +823,7 @@ def _monitor_agent(
     profile: dict[str, Any],
     gemini_api_key_override: str | None = None,
     openrouter_api_key_override: str | None = None,
+    groq_api_key_override: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
     end = datetime.now(timezone.utc)
     start = end - timedelta(hours=window_hours)
@@ -774,6 +896,7 @@ def _monitor_agent(
             temperature=0.2,
             gemini_api_key_override=gemini_api_key_override,
             openrouter_api_key_override=openrouter_api_key_override,
+            groq_api_key_override=groq_api_key_override,
         )
         return content.strip(), stats
     except Exception as exc:
@@ -798,42 +921,38 @@ def _editor_agent(
     profile: dict[str, Any],
     gemini_api_key_override: str | None = None,
     openrouter_api_key_override: str | None = None,
+    groq_api_key_override: str | None = None,
 ) -> str:
     """
-    Editor agent that prioritizes summaries over raw messages.
-    Only uses raw messages as a last resort to reduce token consumption.
+    Editor agent that prioritizes summaries over raw messages - OPTIMIZED.
+    Uses minimal context to reduce token consumption.
     """
     content = (context or "").strip()
     
     if not content:
-        # Priority 1: Use summaries (efficient, pre-processed)
-        content = _fetch_summaries_for_context(hours=window_hours)
+        # Priority 1: Use summaries with short window (efficient, pre-processed)
+        content = _fetch_summaries_for_context(hours=4)  # Reduced from window_hours
         
         # Priority 2: Fall back to latest summary only
         if not content:
             summary = _fetch_latest_summary()
             if summary and summary.get("content"):
-                label = _format_summary_label(summary)
-                content = f"{label}\n{summary['content']}".strip()
+                # Truncate summary to save tokens
+                summary_text = summary['content'][:600] + "..." if len(summary['content']) > 600 else summary['content']
+                content = summary_text
         
-        # Priority 3: Only if no summaries exist, use a small sample of raw messages
-        # This is a fallback for new installations or empty summary tables
+        # Priority 3: Only if no summaries exist, use a very small sample of raw messages
         if not content:
-            rows = _fetch_recent_messages(window_hours, min(limit, 10))  # Limit to 10 max
+            rows = _fetch_recent_messages(min(window_hours, 6), min(limit, 5))  # Further reduced
             if rows:
                 lines = []
                 for row in rows:
-                    timestamp = row["timestamp"]
-                    time_label = (
-                        timestamp.astimezone(timezone.utc).strftime("%H:%M") if timestamp else "--:--"
-                    )
-                    # Truncate content to reduce tokens
-                    msg_content = row["content"][:200] + "..." if len(row["content"]) > 200 else row["content"]
-                    line = f"[{time_label}] {row['source_name']}: {msg_content}"
-                    lines.append(line)
+                    # Minimal formatting, aggressive truncation
+                    msg_content = row["content"][:150] + "..." if len(row["content"]) > 150 else row["content"]
+                    lines.append(f"- {msg_content}")
                 content = "\n".join(lines)
             else:
-                content = "لا توجد أخبار أو ملخصات متاحة حالياً."
+                content = "لا توجد أخبار متاحة."
 
     system_prompt, user_prompt = _prompt_from_profile(profile)
     messages = _build_messages(system_prompt, user_prompt, task=task, content=content)
@@ -842,6 +961,7 @@ def _editor_agent(
         temperature=0.2,
         gemini_api_key_override=gemini_api_key_override,
         openrouter_api_key_override=openrouter_api_key_override,
+        groq_api_key_override=groq_api_key_override,
     )
     return output.strip()
 
@@ -912,18 +1032,19 @@ def _general_agent(
     task: str,
     context: str | None,
     profile: dict[str, Any],
-    window_hours: int = 24,
+    window_hours: int = 6,  # Reduced from 24 to save tokens
     gemini_api_key_override: str | None = None,
     openrouter_api_key_override: str | None = None,
+    groq_api_key_override: str | None = None,
 ) -> str:
     """
-    General agent that uses summaries as context.
-    If no context provided, fetches recent summaries from database.
+    General agent that uses summaries as context - OPTIMIZED.
+    If no context provided, fetches only recent summaries to minimize tokens.
     """
-    # Build context from summaries if not provided
+    # Build context from summaries if not provided (limited to save tokens)
     effective_context = (context or "").strip()
     if not effective_context:
-        effective_context = _fetch_summaries_for_context(hours=window_hours)
+        effective_context = _fetch_summaries_for_context(hours=4)  # Use shorter window
     
     if not effective_context:
         effective_context = "لا توجد ملخصات متاحة حالياً."
@@ -937,6 +1058,7 @@ def _general_agent(
         temperature=0.2,
         gemini_api_key_override=gemini_api_key_override,
         openrouter_api_key_override=openrouter_api_key_override,
+        groq_api_key_override=groq_api_key_override,
     )
     return output.strip()
 
@@ -945,12 +1067,13 @@ def _custom_agent(
     task: str,
     context: str | None,
     profile: dict[str, Any],
-    window_hours: int = 24,
+    window_hours: int = 6,  # Reduced from 24
     gemini_api_key_override: str | None = None,
     openrouter_api_key_override: str | None = None,
+    groq_api_key_override: str | None = None,
 ) -> str:
     """
-    Custom agent that uses summaries as context.
+    Custom agent that uses summaries as context - OPTIMIZED.
     Allows user-defined prompts while automatically providing news summaries.
     """
     # For post writers, do not auto-inject summaries. Use only provided context.
@@ -958,9 +1081,9 @@ def _custom_agent(
     effective_context = (context or "").strip()
     if key not in {"post_official", "post_casual"}:
         if not effective_context:
-            effective_context = _fetch_summaries_for_context(hours=window_hours)
+            effective_context = _fetch_summaries_for_context(hours=4)  # Shorter window
         if not effective_context:
-            effective_context = "لا توجد ملخصات متاحة حالياً."
+            effective_context = "لا توجد ملخصات."
     
     system_prompt, user_prompt = _prompt_from_profile(profile)
     if not system_prompt:
@@ -975,6 +1098,7 @@ def _custom_agent(
         temperature=0.2,
         gemini_api_key_override=gemini_api_key_override,
         openrouter_api_key_override=openrouter_api_key_override,
+        groq_api_key_override=groq_api_key_override,
     )
     return output.strip()
 
@@ -997,6 +1121,7 @@ def run_agent(request: AgentRequest) -> AgentResponse:
 
         gemini_api_key_override = request.gemini_api_key
         openrouter_api_key_override = request.openrouter_api_key
+        groq_api_key_override = request.groq_api_key
         if request.route:
             route_key = request.route.strip().lower()
             profile = _find_profile_by_key(profiles, route_key)
@@ -1013,6 +1138,7 @@ def run_agent(request: AgentRequest) -> AgentResponse:
                     profiles,
                     gemini_api_key_override=gemini_api_key_override,
                     openrouter_api_key_override=openrouter_api_key_override,
+                    groq_api_key_override=groq_api_key_override,
                 )
             except Exception as exc:
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -1026,7 +1152,7 @@ def run_agent(request: AgentRequest) -> AgentResponse:
             profile = active[0]
             route_key = profile.get("key", "unknown")
 
-        window_hours = request.window_hours or 24
+        window_hours = request.window_hours or 6  # Shorter default window
         max_items = request.max_items or 50
         agent_type = profile.get("agent_type", "general")
 
@@ -1037,6 +1163,7 @@ def run_agent(request: AgentRequest) -> AgentResponse:
                 profiles,
                 gemini_api_key_override=gemini_api_key_override,
                 openrouter_api_key_override=openrouter_api_key_override,
+                groq_api_key_override=groq_api_key_override,
             )
             payload = decision.model_dump()
             return AgentResponse(route=route_key, output=json.dumps(payload), meta=payload)
@@ -1046,6 +1173,7 @@ def run_agent(request: AgentRequest) -> AgentResponse:
                 profile,
                 gemini_api_key_override=gemini_api_key_override,
                 openrouter_api_key_override=openrouter_api_key_override,
+                groq_api_key_override=groq_api_key_override,
             )
             return AgentResponse(route=route_key, output=output, meta=stats)
         if agent_type == "editor":
@@ -1057,6 +1185,7 @@ def run_agent(request: AgentRequest) -> AgentResponse:
                 profile,
                 gemini_api_key_override=gemini_api_key_override,
                 openrouter_api_key_override=openrouter_api_key_override,
+                groq_api_key_override=groq_api_key_override,
             )
             return AgentResponse(route=route_key, output=output)
         if agent_type == "search":
@@ -1073,6 +1202,7 @@ def run_agent(request: AgentRequest) -> AgentResponse:
                 window_hours=window_hours,
                 gemini_api_key_override=gemini_api_key_override,
                 openrouter_api_key_override=openrouter_api_key_override,
+                groq_api_key_override=groq_api_key_override,
             )
             return AgentResponse(route=route_key, output=output)
 
@@ -1083,6 +1213,7 @@ def run_agent(request: AgentRequest) -> AgentResponse:
             window_hours=window_hours,
             gemini_api_key_override=gemini_api_key_override,
             openrouter_api_key_override=openrouter_api_key_override,
+            groq_api_key_override=groq_api_key_override,
         )
         return AgentResponse(route=route_key, output=output)
     except RuntimeError as exc:

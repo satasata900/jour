@@ -57,3 +57,18 @@ class SummaryEntry {
     );
   }
 }
+
+/// Represents a smart context snippet - only relevant lines extracted
+class ContextSnippet {
+  final String periodType;
+  final DateTime periodStart;
+  final String snippet;
+  final double relevance;
+
+  ContextSnippet({
+    required this.periodType,
+    required this.periodStart,
+    required this.snippet,
+    required this.relevance,
+  });
+}
